@@ -1,0 +1,248 @@
+---
+title: "GJGNY Analysis"
+output: flexdashboard::flex_dashboard
+runtime: shiny
+author: "Eisen Huang"
+---
+
+
+```{r setup, include=FALSE}
+library(flexdashboard)
+library(shiny)
+library(rmarkdown)
+library(knitr)
+library(Hmisc)
+library(DT)
+library(data.table)
+library(tidyverse)
+library(dplyr)
+library(hash)
+library(lubridate)
+
+assignInNamespace("cedta.override", c(data.table:::cedta.override,"rmarkdown"), "data.table")
+
+
+opts_chunk$set(echo = FALSE, comment="", warning = FALSE, message = FALSE, tidy.opts=list(width.cutoff=55), tidy = TRUE)
+
+getwd()
+```
+
+```{r source_functions}
+source("DSCconstants.R")
+source("Pfunctions.R")
+```
+
+
+```{r constants}
+# Most constants have been placed in the file constants.R to unify the work across reporting and applications.
+
+# Additional constants that are unique to this reporting engine can be added here.
+```
+
+
+```{r functions}
+# Most functions have been placed in the file functions.R to unify the work across reporting and applications.
+
+# Additional functions that are unique to this reporting engine can be added here.
+```
+
+```{r read_data}
+data <- fread("../Data/Green_Jobs_-_Green_New_York__GJGNY__Residential_Loan_Portfolio___Beginning_November_2010.csv", na.strings = "#N/A",  verbose = FALSE)
+dat <- data
+```
+
+```{r clean_data, include=FALSE}
+dat <- numerize_table(dat)
+dat <- factorize_table(dat)
+dat$`Reporting Period` <- asdate_col(dat$`Reporting Period`)
+dat$`CONTRACT DATE` <- asdate_col(dat$`CONTRACT DATE`)
+dat$`SETUP DATE` <- asdate_col(dat$`SETUP DATE`)
+dat$`ORIGINAL MATURITY DATE` <- asdate_col(dat$`ORIGINAL MATURITY DATE`)
+dat$`CURRENT MATURITY DATE` <- asdate_col(dat$`CURRENT MATURITY DATE`)
+dat$`FIRST PAYMENT DATE` <- asdate_col(dat$`FIRST PAYMENT DATE`)
+dat$`LAST PAYMENT DATE` <- asdate_col(dat$`LAST PAYMENT DATE`)
+dat$`ACCOUNT CODE DATE` <- asdate_col(dat$`ACCOUNT CODE DATE`)
+dat$`NEXT PAYMENT DUE DATE` <- asdate_col(dat$`NEXT PAYMENT DUE DATE`)
+
+```
+
+
+```{r define_variables, include=FALSE}
+# General
+all.variables <- c(contractDate.name, setupDate.name, originalLoanAmount.name, originalTerm.name, originalMaturityDate.name, currentMaturityDate.name, interestRate.name, creditScoreCurrentHigh.name, creditScore.name, creditScoreName2.name, debtToIncome.name, firstPaymentDate.name, lastPaymentDate.name, nextPaymentDueDate.name, paymentAmount.name, currentBalance.name, unappliedCash.name, delinquentAmount.name, totalInterestPaid.name, totalLateChargePaid.name, paymentsRemaining.name, daysDelinquent.name, propertyCounty.name, utility.name, installationCity.name, installationZip.name, accountCode.name, accountCodeDate.name, cancelReason.name, typeOfBankruptcy.name, monthSinceOrigination.name, paymentMade.name, purpose.name, loanType.name, underWriting.name, pledged.name)
+
+# Data\Green_Jobs_-_Green_New_York__GJGNY__Residential_Loan_Portfolio___Beginning_November_2010.csv
+data$ORIGINAL_LOAN_AMOUNT = cut2(x = data$`ORIGINAL LOAN AMOUNT`, cuts = c(5000,10000,15000,20000,25000))
+data$CREDIT_SCORE = cut2(x = data$`CREDIT SCORE`, cuts = c(629,689,719))
+data$INTEREST_RATE= cut2(x= data$`INTEREST RATE`, cuts = c(3,4,5,6,7,8))
+data$DAYS_DELINQUENT = cut2(x = data$`DAYS DELINQUENT`, cuts=  c(0,-365,-730,-1095,-1460,-1825,-2190,-2555,-2920,-3285))
+data$DEBT_TO_INCOME = cut2(x = data$`DEBT TO INCOME`, cuts = c(.35,.49))
+data$ORIGINAL_TERM = cut2(x = data$`ORIGINAL TERM`, cuts = c(12,36,60,84,108,132,156))
+
+# data[, eval(satisfaction_name) := get(satisfaction_name) / value_max_satisfaction]
+
+unique_interest_rate <- data[, sort(unique(get(INTEREST_RATE_NAME)))]
+unique_debt_income_ratio <- data[, sort(unique(get(DEBT_TO_INCOME_NAME)))]
+unique_loan_amout <- data[, sort(unique(get(ORIGINAL_LOAN_AMOUNT_NAME)))]
+unique_days_delinquent <-data[, sort(unique(get(DAYS_DELINQUENT_NAME)))]
+unique_original_term <- data[, sort(unique(get(ORIGINAL_TERM_NAME)))]
+unique_credit_score <- data[, sort(unique(get(CREDIT_SCORE_NAME)))]
+unique_purpose <- data[, sort(unique(get(Purpose_NAME)))]
+unique_loan_type<- data[, sort(unique(get(Loan_Type_NAME)))]
+
+sub_groups = list(unique_interest_rate, unique_debt_income_ratio, unique_loan_amout, unique_days_delinquent, unique_original_term, unique_credit_score, unique_purpose, unique_loan_type)
+
+respondent_variables <- c(INTEREST_RATE_NAME, DEBT_TO_INCOME_NAME, ORIGINAL_LOAN_AMOUNT_NAME, DAYS_DELINQUENT_NAME, ORIGINAL_TERM_NAME, CREDIT_SCORE_NAME, Purpose_NAME,Loan_Type_NAME)
+
+# Data Summary
+data_summary <- data
+data_summary <- dplyr::mutate(data_summary, `record_id` = row_number())
+data_summary$`CONTRACT DATE` <- as.Date(parse_date_time(data_summary$`CONTRACT DATE`,"mdy"))
+data_summary$`CONTRACT YEAR` <- format(data_summary$`CONTRACT DATE`, format = "%Y")
+
+respondent.variables <- c(INTEREST_RATE_NAME, DEBT_TO_INCOME_NAME, ORIGINAL_LOAN_AMOUNT_NAME, 
+                          DAYS_DELINQUENT_NAME, ORIGINAL_TERM_NAME, CREDIT_SCORE_NAME, Purpose_NAME,
+                          Loan_Type_NAME, year.name, city.name )
+
+# PP
+PP.variables <- c(avgLoans.name, avgLoanAmouunt.name, avgInterestRate.name, avgdelinquentAmount.name)
+
+```
+
+
+
+
+```{r PP_table, include=FALSE}
+library(astsa)
+library(dplyr)
+library(forecast)
+library(xts)
+pp_dat <- dat
+
+pp_dat$contractMonth <- format(pp_dat$`CONTRACT DATE`, "%Y-%m")
+summary(pp_dat$contractMonth)
+
+pp_month <- pp_dat %>%
+  group_by(contractMonth) %>%
+  summarise(
+    `Average number of loans` = n(),
+    `Average loan amount` = mean(`ORIGINAL LOAN AMOUNT`),
+    `Average interest rate` = mean(`INTEREST RATE`),
+    `Average delinquent amount` = mean(`DELINQUENT AMOUNT`)
+  )
+#plot.ts(pp_month, frequency=12, start=c(2010,12))
+```
+
+```{r tsModels, include=FALSE}
+# Plot data
+
+sarima.for(ts(pp_month$`Average interest rate`, frequency=12, start=c(2010,12)), 12,p=2,d=1,q=1,P=0,D=1,Q=1,S=12)
+```
+
+
+
+
+
+Introduction
+=====================================  
+
+We are analyzing data from the loan records of GJGNY program.  
+
+The data includes the loan information of `r nrow(dat)` loans, and their status information.
+
+Click on the tabs to see different reports.
+
+Data Summary
+===================================
+
+Row {data-height=500}
+-------------------------------------
+
+```{r respondents_input}
+inputPanel(
+  selectInput(inputId="respondent_variable", label = "Select Variable:", choices = respondent.variables, selected = respondent.variables[1]),
+  checkboxInput(inputId = "respondent_show_percentages", label = "Show Percentages", value = TRUE)
+)
+# input <- list(respondent_variable = respondent.variables[1], respondent_show_percentages = TRUE)
+
+# You can't do this:  input$my.variable = 13
+```
+
+```{r respondents_output}
+renderPlot({
+  tab <- percentage.table(x = data_summary[, .SD[1], by = id.name][, get(input$respondent_variable)])
+  barplot(height = tab, space=0.01, las = 1, main = input$respondent_variable, ylab = "Percentage", xlab = input$respondent_variable, ylim = c(0, 1.2*max(tab, na.rm = TRUE)), col = "dodgerblue")
+  
+  if(input$respondent_show_percentages == TRUE){
+    space_val = 0
+    text(x = -0.4 + 1:length(tab) * (1+space_val), y = tab, labels = sprintf("%.1f%%", tab), pos = 3)
+  }
+})
+```
+
+
+
+Segmented Outcomes
+=====================================  
+
+
+Row {data-height=500}
+-------------------------------------
+
+```{r q2_input}
+inputPanel(
+  
+    selectInput(inputId="seg.loan.type", label = "Select Loan Type:", choices = unique_loan_type, selected = unique_loan_type[1]),
+
+  selectInput(inputId="seg.interest.group", label = "Interest Rate", choices = unique_interest_rate, selected = unique_interest_rate, multiple = TRUE),
+
+  selectInput(inputId = "seg.loan.amount", label = "Loan Amount", choices = unique_loan_amout, selected = unique_loan_amout, multiple = TRUE),
+ 
+    selectInput(inputId = "seg.original.term", label = "Original Term", choices = unique_original_term, selected = unique_original_term, multiple = TRUE),
+
+  selectInput(inputId = "seg.debt.income", label = "Debt to Income Ratio", choices = unique_debt_income_ratio, selected = unique_debt_income_ratio, multiple = TRUE),
+
+  selectInput(inputId = "seg.credit.score", label = "Credit Score", choices = unique_credit_score, selected = unique_credit_score, multiple = TRUE),
+
+selectInput(inputId = "seg.purpose", label = "Purpose", choices = unique_purpose, selected = unique_purpose, multiple = TRUE)
+
+#selectInput(inputId = "seg.days.delinquent", label = "Days Delinquent", choices = unique_days_delinquent, selected = unique_days_delinquent, multiple = TRUE),
+)
+```
+
+Row {data-height=500}
+-------------------------------------
+```{r q2_output}
+
+
+renderPlot({
+  
+seg.subdat <- data[get(ORIGINAL_LOAN_AMOUNT_NAME) %in% input$seg.loan.amount & get(INTEREST_RATE_NAME) %in% input$seg.interest.group & get(ORIGINAL_TERM_NAME) %in% input$seg.original.term & get(Purpose_NAME) %in% input$seg.purpose & get(CREDIT_SCORE_NAME) %in% input$seg.credit.score & get(DEBT_TO_INCOME_NAME) %in% input$seg.debt.income]
+
+seg.tab = seg.subdat[, mean(`Loan Type` == input$seg.loan.type), by = DAYS_DELINQUENT]
+
+  #refine barplot
+  barplot(height = seg.tab[, V1], names.arg = seg.tab[, DAYS_DELINQUENT], col = "dodgerblue", space=0.01, las = 1, ylim = c(0, 1.2*max(seg.tab[, V1], na.rm = TRUE))) 
+  # main = input$seg.loan.type,
+})
+
+```
+
+Portfolio Performance Prediction
+===================================
+Row {data-height=800}
+-------------------------------------
+```{r PP_input}
+inputPanel(
+  selectInput(inputId = "pp_variable", label = "Select Variable:", choices = PP.variables, selected = PP.variables[2])
+)
+
+```
+
+```{r PP_output}
+renderPlot({
+  sarima.for(ts(pp_month[, input$pp_variable], frequency=12, start=c(2010,12)), 12,p=2,d=1,q=1,P=0,D=1,Q=1,S=12)
+})
+```
+
+
